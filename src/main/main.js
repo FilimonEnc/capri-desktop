@@ -20,6 +20,7 @@ const setup = require('./setup');
 const apps = require('./apps');
 const launch = require('./launch');
 const files = require('./files');
+const skills = require('./skills');
 const { ASSISTANTS, assistant } = require('./assistants');
 const activeAssistant = () => assistant(config.load().assistant); // Claude Code or Codex
 const activeHooks = () => activeAssistant().hooks;
@@ -339,6 +340,7 @@ function rebuildTray() {
         : [{ label: t.noReminders, enabled: false }],
     },
     { label: t.custom, click: () => sendCommand('customize') },
+    { label: t.marketplace, click: () => shell.openExternal(`http://127.0.0.1:${PORT}/marketplace`) },
     { label: cfg.visible ? t.hide : t.show, accelerator: 'Ctrl+Alt+C', click: () => toggleVisible() },
     { type: 'separator' },
     {
@@ -360,6 +362,20 @@ function rebuildTray() {
           },
         },
       ],
+    },
+    {
+      label: t.player,
+      submenu: [
+        ['spotify', t.playerSpotify],
+        ['yandex', t.playerYandex],
+        ['ytmusic', t.playerYtMusic],
+        ['vk', t.playerVk],
+        ['apple', t.playerApple],
+        ['youtube', t.playerYoutube],
+      ].map(([player, label]) => ({
+        label, type: 'radio', checked: (cfg.musicPlayer || 'spotify') === player,
+        click: () => updateConfig({ musicPlayer: player }),
+      })),
     },
     {
       label: t.screen,
@@ -851,8 +867,23 @@ function registerIpc() {
   });
   ipcMain.handle('apps:launch', (_e, item) => launch.launch(item).then(() => ({ ok: true }), (err) => ({ ok: false, error: err.message })));
   ipcMain.handle('apps:media', (_e, action) => launch.media(action));
-  ipcMain.handle('apps:music', (_e, query) => launch.music(query).catch(() => false));
+  ipcMain.handle('apps:music', (_e, arg) => {
+    const query = typeof arg === 'string' ? arg : arg?.query;
+    const player = typeof arg === 'object' ? arg?.player : null;
+    return launch.music(query, player).catch(() => false);
+  });
   ipcMain.handle('apps:site', (_e, address) => launch.site(address).catch(() => false));
+  ipcMain.handle('skills:list', () => skills.list());
+  ipcMain.handle('skills:toggle', (_e, { id, enabled }) => skills.toggle(id, enabled));
+  ipcMain.handle('skills:install', (_e, id) => skills.install(id));
+  ipcMain.handle('skills:uninstall', (_e, id) => skills.uninstall(id));
+  ipcMain.handle('skills:match', (_e, text) => {
+    const m = skills.match(text);
+    return m ? { id: m.skill.id, match: Array.from(m.match) } : null;
+  });
+  ipcMain.handle('skills:run', (_e, { id, params }) => skills.runAction(id, params));
+  ipcMain.handle('skills:powers', () => skills.getPowers());
+  ipcMain.handle('skills:openMarketplace', () => shell.openExternal(`http://127.0.0.1:${PORT}/marketplace`));
   // typing to her: the overlay takes the keyboard while the chat is open, and gives it back after
   ipcMain.on('overlay:focus', (_e, on) => {
     if (!overlay) return;

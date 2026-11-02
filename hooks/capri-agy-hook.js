@@ -9,6 +9,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 
 const PORT = Number(process.env.CAPRI_PORT) || 47823;
 const HOOK_TYPE = process.argv[2] || "PreToolUse";
@@ -67,6 +68,110 @@ function isOutsideWorkspace(filePath, workspacePaths) {
   } catch {
     return false;
   }
+}
+
+function isAutoExecutionOrTurbo(payload) {
+  // 1. Explicit in hook payload (passed by Antigravity or test)
+  if (payload) {
+    if (payload.turbo === true || payload.isTurbo === true) return true;
+    if (payload.turbo === false || payload.isTurbo === false) return false;
+    const policy = payload.autoExecutionPolicy || payload.auto_execution_policy || payload.executionPolicy || payload.permissionMode || payload.permission_mode;
+    if (typeof policy === "string") {
+      if (/eager|turbo|always/i.test(policy) && !/strict|never|deny|ask/i.test(policy)) return true;
+      if (/strict|ask|deny|review/i.test(policy)) return false;
+    }
+  }
+
+  // 2. Explicit environment variables
+  if (process.env.AGY_TURBO === "1" || process.env.AGY_TURBO === "true" || process.env.ANTIGRAVITY_TURBO === "1") {
+    return true;
+  }
+  if (process.env.AGY_TURBO === "0" || process.env.AGY_TURBO === "false" || process.env.ANTIGRAVITY_TURBO === "0") {
+    return false;
+  }
+
+  // 3. Capri's own config preference if configured
+  try {
+    const appData = process.env.APPDATA || (process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support") : path.join(os.homedir(), ".config"));
+    const capriCfgFiles = [
+      path.join(appData, "capri-desktop", "config.json"),
+      path.join(appData, "Capri", "config.json"),
+    ];
+    for (const f of capriCfgFiles) {
+      if (fs.existsSync(f)) {
+        const c = JSON.parse(fs.readFileSync(f, "utf8"));
+        if (c.agyTurbo === "turbo" || c.agyMode === "turbo") return true;
+        if (c.agyTurbo === "strict" || c.agyMode === "strict") return false;
+      }
+    }
+  } catch {}
+
+  const base = process.env.AGY_CONFIG_DIR || path.join(os.homedir(), ".gemini", "config");
+
+  // 4. Project settings (~/.gemini/config/projects/*.json)
+  const workspacePaths = payload?.workspacePaths || [];
+  if (Array.isArray(workspacePaths) && workspacePaths.length > 0) {
+    const projDir = path.join(base, "projects");
+    if (fs.existsSync(projDir)) {
+      try {
+        const files = fs.readdirSync(projDir).filter((f) => f.endsWith(".json"));
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(projDir, file), "utf8");
+          const proj = JSON.parse(content);
+          const resources = proj.projectResources?.resources || [];
+          const matches = resources.some((r) => {
+            const uri = r.gitFolder?.folderUri || r.folderUri || "";
+            const cleanUri = decodeURIComponent(uri.replace(/^file:\/\/\/?/i, ""));
+            return workspacePaths.some((ws) => {
+              const wsNorm = path.resolve(ws).toLowerCase();
+              const projNorm = path.resolve(cleanUri).toLowerCase();
+              return wsNorm === projNorm || wsNorm.startsWith(projNorm) || projNorm.startsWith(wsNorm);
+            });
+          });
+          if (matches && proj.settings) {
+            const autoExec = proj.settings.autoExecutionPolicy;
+            if (typeof autoExec === "string") {
+              if (/eager|turbo|always/i.test(autoExec) && !/strict|ask|deny/i.test(autoExec)) return true;
+              if (/strict|ask|deny|review/i.test(autoExec)) return false;
+            }
+            if (proj.settings.artifactReviewMode === "ARTIFACT_REVIEW_MODE_TURBO") return true;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 5. Global userSettings in ~/.gemini/config/config.json
+  const configFile = path.join(base, "config.json");
+  if (fs.existsSync(configFile)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(configFile, "utf8"));
+      const userSettings = cfg.userSettings || {};
+      const autoExec = userSettings.autoExecutionPolicy;
+      if (typeof autoExec === "string") {
+        if (/eager|turbo|always/i.test(autoExec) && !/strict|ask|deny/i.test(autoExec)) return true;
+        if (/strict|ask|deny|review/i.test(autoExec)) return false;
+      }
+      if (userSettings.artifactReviewMode === "ARTIFACT_REVIEW_MODE_TURBO") return true;
+      if (userSettings.browserJsExecutionPolicy === "BROWSER_JS_EXECUTION_POLICY_TURBO") return true;
+    } catch {}
+  }
+
+  return false;
+}
+
+function isFileAccessAllowed(payload) {
+  if (isAutoExecutionOrTurbo(payload)) return true;
+  const base = process.env.AGY_CONFIG_DIR || path.join(os.homedir(), ".gemini", "config");
+  const configFile = path.join(base, "config.json");
+  if (fs.existsSync(configFile)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(configFile, "utf8"));
+      const policy = cfg.userSettings?.nonWorkspaceFileAccessPolicy;
+      if (typeof policy === "string" && /allow/i.test(policy)) return true;
+    } catch {}
+  }
+  return false;
 }
 
 function mapTool(toolCall) {
@@ -177,19 +282,24 @@ function buildEvents(payload) {
     const events = [{ delay: 0, evt: { ...base, hook_event_name: "PreToolUse", ...mapped } }];
     const toolName = payload.toolCall?.name || "";
     const filePath = mapped.tool_input?.file_path || "";
+    const turbo = isAutoExecutionOrTurbo(payload);
 
     if (toolName === "run_command") {
-      const cmd = mapped.tool_input.command || mapped.tool_input.description || "PowerShell";
-      events.push({
-        delay: 350,
-        evt: {
-          ...base,
-          hook_event_name: "Notification",
-          notification_type: "permission_prompt",
-          title: "Permission needed",
-          message: cmd,
-        },
-      });
+      // In turbo / eager auto-execution mode, commands execute automatically.
+      // Capri should not signal that user permission is needed.
+      if (!turbo) {
+        const cmd = mapped.tool_input.command || mapped.tool_input.description || "PowerShell";
+        events.push({
+          delay: 350,
+          evt: {
+            ...base,
+            hook_event_name: "Notification",
+            notification_type: "permission_prompt",
+            title: "Permission needed",
+            message: cmd,
+          },
+        });
+      }
     } else if (toolName === "ask_question") {
       events.push({
         delay: 250,
@@ -202,16 +312,18 @@ function buildEvents(payload) {
         },
       });
     } else if (filePath && isOutsideWorkspace(filePath, payload.workspacePaths)) {
-      events.push({
-        delay: 350,
-        evt: {
-          ...base,
-          hook_event_name: "Notification",
-          notification_type: "permission_prompt",
-          title: "Permission needed",
-          message: filePath,
-        },
-      });
+      if (!isFileAccessAllowed(payload)) {
+        events.push({
+          delay: 350,
+          evt: {
+            ...base,
+            hook_event_name: "Notification",
+            notification_type: "permission_prompt",
+            title: "Permission needed",
+            message: filePath,
+          },
+        });
+      }
     } else if (toolName === "invoke_subagent") {
       events.push({
         delay: 200,

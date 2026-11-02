@@ -110,7 +110,7 @@ test('Codex onboarding, guide, and chat use Codex in every language; Claude text
   const { LINES, linesFor } = await import(moduleUrl(path.join(__dirname, '../src/renderer/js/lines.js')));
   const { Guide } = await import(moduleUrl(path.join(__dirname, '../src/renderer/js/guide.js')));
   const { Chat } = await import(moduleUrl(path.join(__dirname, '../src/renderer/js/chat.js')));
-  const strings = (value) => typeof value === 'string' ? [value] : Object.values(value).flatMap(strings);
+  const strings = (value) => typeof value === 'string' ? [value] : (value && typeof value === 'object' ? Object.values(value).flatMap(strings) : []);
   for (const lang of Object.keys(LINES)) {
     const text = linesFor(lang, 'codex');
     assert.doesNotMatch(strings(text).join('\n'), /Claude|settings\.json|\.claude/);
@@ -182,9 +182,9 @@ test('Antigravity: its events reach her as its own sessions, and its hook never 
   await once(server, 'listening');
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const port = server.address().port;
-  const run = (type, payload) => new Promise((resolve, reject) => {
+  const run = (type, payload, env = {}) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(__dirname, '..', 'hooks', 'capri-agy-hook.js'), type], {
-      env: { ...process.env, CAPRI_PORT: String(port) }, windowsHide: true,
+      env: { ...process.env, CAPRI_PORT: String(port), ...env }, windowsHide: true,
     });
     let out = '';
     child.stdout.on('data', (s) => { out += s; });
@@ -194,12 +194,20 @@ test('Antigravity: its events reach her as its own sessions, and its hook never 
   });
   const base = { conversationId: 'c1', workspacePaths: ['/project'] };
   // "allow" only means it doesn't block: Antigravity's own approval still applies (never "auto_approve")
-  assert.deepEqual(await run('PreToolUse', { ...base, toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } }), { decision: 'allow' });
+  // In non-turbo mode: permission_prompt is signaled for commands
+  assert.deepEqual(await run('PreToolUse', { ...base, toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } }, { AGY_TURBO: '0' }), { decision: 'allow' });
   assert.deepEqual(await run('Stop', base), { decision: 'stop' });
   assert.ok(events.length >= 3);
   assert.ok(events.every((e) => e.session_id === 'agy:c1'));
   assert.equal(events[0].tool_input.command, 'npm test');
   assert.equal(events[1].notification_type, 'permission_prompt');
+
+  // In turbo mode: auto-confirmation is active, no permission_prompt is signaled
+  events.length = 0;
+  assert.deepEqual(await run('PreToolUse', { ...base, toolCall: { name: 'run_command', args: { CommandLine: 'npm test' } } }, { AGY_TURBO: '1' }), { decision: 'allow' });
+  assert.ok(events.length >= 1);
+  assert.equal(events[0].hook_event_name, 'PreToolUse');
+  assert.equal(events.some((e) => e.notification_type === 'permission_prompt'), false);
 
   // she follows it only while it's the assistant she watches
   globalThis.matchMedia = () => ({ matches: false });

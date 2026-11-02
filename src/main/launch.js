@@ -10,6 +10,7 @@ const { spawn, execFile } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { app, shell } = require('electron');
 const { powershell } = require('./apps');
+const config = require('./config');
 
 const WIN = process.platform === 'win32';
 // not things to open from a chat: uninstallers, help pages and the like
@@ -221,16 +222,59 @@ async function media(action) {
   ).then(() => true, () => false);
 }
 
-// A Spotify search for it: in the app if it's installed, else on the web.
-async function music(query) {
+const PLAYERS = {
+  spotify: {
+    name: 'Spotify',
+    app: (q) => `spotify:search:${encodeURIComponent(q)}`,
+    web: (q) => `https://open.spotify.com/search/${encodeURIComponent(q)}`,
+  },
+  yandex: {
+    name: 'Яндекс Музыка',
+    app: (q) => `yandexmusic://search?text=${encodeURIComponent(q)}`,
+    web: (q) => `https://music.yandex.ru/search?text=${encodeURIComponent(q)}`,
+  },
+  ytmusic: {
+    name: 'YouTube Music',
+    web: (q) => `https://music.youtube.com/search?q=${encodeURIComponent(q)}`,
+  },
+  vk: {
+    name: 'VK Музыка',
+    web: (q) => `https://vk.com/audio?q=${encodeURIComponent(q)}`,
+  },
+  apple: {
+    name: 'Apple Music',
+    app: (q) => `music://search?term=${encodeURIComponent(q)}`,
+    web: (q) => `https://music.apple.com/search?term=${encodeURIComponent(q)}`,
+  },
+  youtube: {
+    name: 'YouTube',
+    web: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
+  },
+};
+
+// A song search in the chosen player: in its app if installed, else on the web.
+async function music(query, player = null) {
   const q = String(query || '').trim().slice(0, 200);
   if (!q) return false;
-  try {
-    await shell.openExternal(`spotify:search:${encodeURIComponent(q)}`);
-  } catch {
-    await shell.openExternal(`https://open.spotify.com/search/${encodeURIComponent(q)}`);
+  const target = player || config.load().musicPlayer || 'spotify';
+  if (target === 'youtube') {
+    const top = await youtube(q);
+    return top ? { ok: true, player: 'YouTube', title: top.title } : false;
   }
-  return true;
+  const p = PLAYERS[target] || PLAYERS.spotify;
+  if (p.app) {
+    try {
+      await shell.openExternal(p.app(q));
+      return { ok: true, player: p.name };
+    } catch {}
+  }
+  if (p.web) {
+    try {
+      await shell.openExternal(p.web(q));
+      return { ok: true, player: p.name };
+    } catch {}
+  }
+  return false;
 }
 
 // A song on YouTube, the exact video: the first result of a search (no key needed), opened in your

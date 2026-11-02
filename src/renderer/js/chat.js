@@ -41,22 +41,64 @@ const MEDIA_ASK = [
   ['voldown', /\b(quieter|moins fort)\b|baisse le son|turn (it )?down|baja el volumen|abaixa o volume|тише/i],
   ['mute', /\bmute\b|coupe le son|silencia|sem som|выключи звук/i],
 ];
-const MUSIC_WORD = /musi|chanson|song|track|titre|morceau|spotify|canci|faixa|песн|музык|трек/i;
-// "put X on Spotify", "mets X sur Spotify", "pon X en Spotify", "coloca X no Spotify", "включи X в Spotify"
-const SPOTIFY_ASK = /(?:play|put on|put|mets|joue|lance|écoute|pon|toca|reproduce|coloca|toque|включи|поставь)\s+(?:moi\s+|me\s+)?(.+?)\s+(?:on|sur|en|no|na|в)\s+spotify/i;
+const MUSIC_WORD = /musi|chanson|song|track|titre|morceau|spotify|yandex|яндекс|apple|vk|canci|faixa|песн|музык|трек/i;
 const MEDIA_ACTIONS = new Set(MEDIA_ASK.map(([action]) => action));
-// "mets Bohemian Rhapsody sur YouTube", "play Daft Punk on youtube"
-const YOUTUBE_ASK = /(?:play|put on|put|mets|met|joue|lance|écoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в)\s+youtube/i;
+
+// Requests naming a specific music player:
+// "put X on Spotify", "mets X sur Spotify", "включи X в Spotify"
+// "включи X в яндекс музыке", "включи X на яндексе", "play X on yandex music"
+// "включи X в вк", "включи X в apple music", "play X on youtube music", etc.
+const PLAYER_ASKS = [
+  ['ytmusic', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:youtube\s+music|yt\s+music|ютуб\s+музык[аеу])/i],
+  ['yandex', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:yandex(?:\s+music)?|яндекс(?:е|\.?(?:\s+музык[аеу]))?)/i],
+  ['spotify', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:spotify|спотифай)/i],
+  ['vk', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:vk(?:\s+music)?|вк(?:\.?\s+музык[аеу])?)/i],
+  ['apple', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:apple(?:\s+music)?|эппл(?:\s+музык[аеу])?)/i],
+  ['youtube', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.+?)\s+(?:on|sur|en|no|na|в|на)\s+(?:youtube|ютуб)/i],
+];
+const PLAYER_BEFORE_ASKS = [
+  ['ytmusic', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:youtube\s+music|yt\s+music|ютуб\s+музык[аеу])\s+(.+)/i],
+  ['yandex', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:yandex(?:\s+music)?|яндекс(?:е|\.?(?:\s+музык[аеу]))?)\s+(.+)/i],
+  ['spotify', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:spotify|спотифай)\s+(.+)/i],
+  ['vk', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:vk(?:\s+music)?|вк(?:\.?\s+музык[аеу])?)\s+(.+)/i],
+  ['apple', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:apple(?:\s+music)?|эппл(?:\s+музык[аеу])?)\s+(.+)/i],
+  ['youtube', /(?:play|put on|put|mets|met|joue|lance|écoute|ecoute|pon|toca|reproduce|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(?:on|sur|en|no|na|в|на)\s+(?:youtube|ютуб)\s+(.+)/i],
+];
+
+function matchPlayerAsk(text) {
+  for (const [player, re] of PLAYER_ASKS) {
+    const m = re.exec(text);
+    if (m?.[1]) return { player, song: songOf(m[1]) };
+  }
+  for (const [player, re] of PLAYER_BEFORE_ASKS) {
+    const m = re.exec(text);
+    if (m?.[1]) return { player, song: songOf(m[1]) };
+  }
+  return null;
+}
+
+function detectPlayer(text) {
+  if (/youtube\s+music|yt\s+music|ютуб\s+музык/i.test(text)) return 'ytmusic';
+  if (/yandex|яндекс/i.test(text)) return 'yandex';
+  if (/spotify|спотифай/i.test(text)) return 'spotify';
+  if (/vk|вк/i.test(text)) return 'vk';
+  if (/apple|эппл/i.test(text)) return 'apple';
+  if (/youtube|ютуб/i.test(text)) return 'youtube';
+  return null;
+}
+
 // "mets Bohemian Rhapsody", "joue-moi du Daft Punk", "play some Queen": a song, or a game to play
 const PLAY_ASK = /^(?:capri,?\s+)?(?:mets|met|joue|play|put on|pon|toca|coloca|bota|toque|включи|поставь)(?:[- ]moi|[- ]me|me)?\s+(.{2,100})$/iu;
 // "joue à Brawlhalla", "play the game…": a game, not a song
 const GAME_ASK = /^(?:capri,?\s+)?(?:joue|play)\s+(?:à|au|aux|a|the game)\s/i;
 // "du Daft Punk", "some Queen": who to play, without the "some"
-const songOf = (s) => s
-  .replace(/^(?:la |le |une? |the |some )?(?:musique|music|chanson|son|morceau|song|track|songs)\s+(?:de |d['’]|du |by |of )?/i, '')
-  .replace(/^(?:(?:du|de la|de l['’]|des|de|some|un peu de|del|un poco de|algo de|um pouco de)\s+|d['’])/i, '')
-  .replace(/\s+(?:on|sur|en|no|na|в)\s+youtube\s*$/i, '')
-  .trim();
+function songOf(s) {
+  return s
+    .replace(/^(?:la |le |une? |the |some )?(?:musique|music|chanson|son|morceau|song|track|songs)\s+(?:de |d['’]|du |by |of )?/i, '')
+    .replace(/^(?:(?:du|de la|de l['’]|des|de|some|un peu de|del|un poco de|algo de|um pouco de)\s+|d['’])/i, '')
+    .replace(/\s+(?:on|sur|en|no|na|в|на)\s+(?:youtube|spotify|yandex|яндекс|apple|vk)(?:\s+music|\s+музык[аеу])?\s*$/i, '')
+    .trim();
+}
 // "démarre YouTube et mets la musique de Daft Punk": the song asked for after an "and"
 const PLAY_AFTER = /\s(?:et|and|y|e|и)\s+(?:mets|met|joue|play|put on|pon|toca|coloca|bota|включи|поставь|démarre|demarre|lance|start|launch|écoute|ecoute)(?:[- ]moi|[- ]me)?\s+(.{2,100})$/i;
 // "lance la musique de Daft Punk", "start the song X": an app verb, but music right after it
@@ -169,7 +211,25 @@ export class Chat {
     this.jealousy = null;  // and how she takes your other AIs
     this.onMessage = null; // () => void: you said something to her
     this.waitingWhen = null; // a reminder you asked for without saying when: { text, until }
+    this.musicPlayer = 'spotify';
+    this.dynamicPowers = [];
+    this.refreshPowers();
     host.onChatDelta(({ id, text }) => this.onDelta(id, text));
+  }
+
+  async refreshPowers() {
+    try {
+      this.dynamicPowers = (await this.host.skillsPowers?.()) || [];
+    } catch {}
+  }
+
+  configure(cfg = {}) {
+    if (cfg.musicPlayer) this.musicPlayer = cfg.musicPlayer;
+  }
+
+  playerName(player = null) {
+    const key = player || this.musicPlayer || 'spotify';
+    return this.t.playerNames?.[key] || key;
   }
 
   get t() {
@@ -178,6 +238,7 @@ export class Chat {
 
   async start() {
     const { capri, host, t } = this;
+    this.refreshPowers();
     if (this.open) {
       this.panel.chatInput.focus();
       return;
@@ -279,6 +340,29 @@ export class Chat {
     this.panel.chatTurn({ quote: text, face: 'aside' });
     this.capri.pulse();
     this.onMessage?.();
+
+    // Direct dynamic skills execution (weather, calculator, dice, custom skills)
+    if (!this.agent) {
+      try {
+        const skillMatch = await this.host.skillsMatch?.(text);
+        if (skillMatch && skillMatch.id) {
+          const res = await this.host.skillsRun?.(skillMatch.id, { text, match: skillMatch.match });
+          if (res && res.ok && res.text) {
+            this.turn = 0;
+            this.answer = res.text;
+            this.remember({ role: 'assistant', content: res.text });
+            this.panel.stream(res.text, { done: true });
+            this.panel.setFace(res.face || 'smug');
+            this.panel.setChatBusy(false);
+            this.zap();
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[skills] match execution error:', err);
+      }
+    }
+
     // what you asked for plainly happens right away (the music, the volume, an app you named): her
     // line about it comes under her answer (Claude Code, answering her chat, does things its own way)
     const asked = this.agent ? null : this.asked(text);
@@ -422,10 +506,8 @@ export class Chat {
     }
     const media = MEDIA_ASK.find(([, re]) => re.test(text))?.[0];
     if (media && (count <= 5 || MUSIC_WORD.test(text))) return { kind: 'media', action: media };
-    const song = SPOTIFY_ASK.exec(text)?.[1];
-    if (song) return { kind: 'music', song };
-    const video = YOUTUBE_ASK.exec(text)?.[1];
-    if (video) return { kind: 'youtube', song: songOf(video) };
+    const playerAsk = matchPlayerAsk(text);
+    if (playerAsk) return { kind: 'music', song: playerAsk.song, player: playerAsk.player };
     const app = this.askedToClose(text);
     if (app) return { kind: 'close', name: app };
     if (GAME_ASK.test(text) && count <= 8) return { kind: 'open', text };
@@ -470,8 +552,7 @@ export class Chat {
       return (await this.host.media(asked.action)) ? { line: t.media[asked.action], face: 'smug' } : null;
     }
     if (asked.kind === 'music') {
-      this.zap();
-      return (await this.host.music(asked.song)) ? { line: fmt(t.music, { song: asked.song }), face: 'laugh' } : null;
+      return this.doMusic(asked.song, asked.player);
     }
     if (asked.kind === 'youtube') return this.youtube(asked.song);
     if (asked.kind === 'roblox') {
@@ -513,7 +594,7 @@ export class Chat {
         ? await this.doNow({ kind: 'open', text: asked.before }) : null;
       // "joue à Brawlhalla" is a game, "lance spotify" an app; anything else, a song
       const game = await this.host.findLaunch(asked.song);
-      const then = game && ['steam', 'epic', 'app', 'file'].includes(game.kind) && !game.risky ? await this.openNow(game) : await this.youtube(asked.song);
+      const then = game && ['steam', 'epic', 'app', 'file'].includes(game.kind) && !game.risky ? await this.openNow(game) : await this.doMusic(asked.song);
       if (!first?.line) return then;
       return { line: [first.line, then?.line].filter(Boolean).join('\n'), face: then?.face || first.face };
     }
@@ -585,14 +666,25 @@ export class Chat {
     if (asked && asked.kind !== 'open') return undefined; // music that didn't work out: nothing more to offer
     const closeTag = tagged(raw);
     if (closeTag) return wanted('close', text) ? this.offerClose(closeTag, answer) : undefined;
+    const skillTag = /\[\[\s*skill\s*:\s*([a-zA-Z0-9_-]+)(?:\s+(.*?))?\]\]/i.exec(raw);
+    if (skillTag) {
+      const skillId = skillTag[1].trim();
+      const input = (skillTag[2] || '').trim();
+      const skillRes = await this.host.skillsRun?.(skillId, { text: input || text, match: [input] }).catch(() => null);
+      if (skillRes && skillRes.ok && skillRes.text) {
+        this.zap();
+        this.addLine(answer, skillRes.text, skillRes.face || 'smug');
+        return undefined;
+      }
+    }
     const tag = TAG.exec(raw);
     if (!tag) return undefined;
     const kind = tag[1].toLowerCase();
     const value = tag[2].trim();
     if (!value || !wanted(kind, text)) return undefined;
     if (kind === 'media') return MEDIA_ACTIONS.has(value.toLowerCase()) ? this.media(value.toLowerCase(), answer) : undefined;
-    // a song she picked: on YouTube, the right video (on Spotify if that's what you said)
-    if (kind === 'music') return /spotify/i.test(text) ? this.music(value, answer) : this.playOn(value, answer);
+    // a song she picked: in the chosen or mentioned player
+    if (kind === 'music') return this.music(value, answer, detectPlayer(text));
     if (kind === 'site') return this.offerSite(value, answer);
     const item = await this.host.findLaunch(value);
     if (item) return this.launch(item, answer);
@@ -642,11 +734,19 @@ export class Chat {
     if (ok) this.addLine(answer, this.t.media[action], 'smug');
   }
 
-  // A Spotify search, in the app if it's there.
-  async music(song, answer) {
+  async doMusic(song, player = null) {
+    const target = player || this.musicPlayer || 'spotify';
+    if (target === 'youtube') return this.youtube(song);
     this.zap();
-    const ok = await this.host.music(song);
-    if (ok) this.addLine(answer, fmt(this.t.music, { song }), 'laugh');
+    const res = await this.host.music(song, target);
+    if (!res) return null;
+    return { line: fmt(this.t.music, { song, player: this.playerName(target) }), face: 'laugh' };
+  }
+
+  // A song search, in the chosen player.
+  async music(song, answer, player = null) {
+    const done = await this.doMusic(song, player);
+    if (done) this.addLine(answer, done.line, done.face);
   }
 
   // A website: always behind a button that shows where it goes.
@@ -726,7 +826,7 @@ export class Chat {
   // What she can do on the PC when you ask (Windows), and nothing else.
   powers() {
     const lines = [
-      'Only when the user asks you to open an app, a game, a file or folder on their desktop, or a folder like Downloads, to play music, to control the music playing, or to open a website: say in a few words that you will, and end your answer with one tag: [[open: NAME]], [[music: ARTIST - SONG]] (it plays on YouTube; if they did not say which song, pick one that fits), [[media: ACTION]] (ACTION: pause, play, next, previous, volup, voldown or mute), or [[site: ADDRESS]]. Some of these get a button to confirm, so never say it is already done. Any other time, write no tag at all: there are no other tags.',
+      'Only when the user asks you to open an app, a game, a file or folder on their desktop, or a folder like Downloads, to play music, to control the music playing, or to open a website: say in a few words that you will, and end your answer with one tag: [[open: NAME]], [[music: ARTIST - SONG]] (it plays in their music player; if they did not say which song, pick one that fits), [[media: ACTION]] (ACTION: pause, play, next, previous, volup, voldown or mute), or [[site: ADDRESS]]. Some of these get a button to confirm, so never say it is already done. Any other time, write no tag at all: there are no other tags.',
     ];
     if (this.apps.length) {
       const open = this.apps.map(({ name, label }) => (label && label !== name ? `${name} (${label})` : name)).join(', ');
@@ -739,6 +839,9 @@ export class Chat {
     }
     lines.push('Your system also searches the user\'s files when they ask you to find one, searches the web when they ask, takes screenshots, and starts Roblox games by name: what it did shows under your answer, so never make up file names or results.');
     lines.push('Apart from that, you can\'t see the user\'s screen or files, and you can\'t touch anything else on their PC (settings, files): if asked, say plainly that you can\'t, in character, and don\'t pretend to.');
+    if (this.dynamicPowers?.length) {
+      lines.push(...this.dynamicPowers);
+    }
     return lines;
   }
 

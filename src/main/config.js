@@ -15,6 +15,7 @@ const DEFAULTS = {
   visible: true,
   welcomed: false,   // she has introduced herself (her welcome panel)
   assistant: 'auto', // the coding assistant she watches: 'claude' or 'codex' ('auto': whichever has her hooks)
+  musicPlayer: 'spotify', // the player used for songs: 'spotify', 'yandex', 'ytmusic', 'vk', 'apple', 'youtube'
   linked: false,     // a Claude Code event has reached her at least once
   chatModel: null,   // the model she talks with (null: the provider's first one)
   provider: 'ollama', // who answers her chat: a key of llm.js PROVIDERS

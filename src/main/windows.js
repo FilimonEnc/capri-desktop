@@ -26,6 +26,14 @@ function startWindowWatch({ overlay, onUpdate }) {
   const handle = overlay.getNativeWindowHandle();
   const self = handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0));
 
+  let cachedBounds = null;
+  const getBounds = () => {
+    if (!cachedBounds && !overlay.isDestroyed()) cachedBounds = overlay.getBounds();
+    return cachedBounds;
+  };
+  overlay.on('resize', () => { cachedBounds = null; });
+  overlay.on('move', () => { cachedBounds = null; });
+
   const toOverlay = (win, bounds) => {
     const dip = screen.screenToDipRect(null, { x: win.x, y: win.y, width: win.w, height: win.h });
     return { id: win.id, x: dip.x - bounds.x, y: dip.y - bounds.y, w: dip.width, h: dip.height, max: win.max };
@@ -34,7 +42,8 @@ function startWindowWatch({ overlay, onUpdate }) {
   // the snapshot as seen from her window, wherever it is now
   const send = () => {
     if (!last || overlay.isDestroyed()) return;
-    const bounds = overlay.getBounds();
+    const bounds = getBounds();
+    if (!bounds) return;
     const wins = last.wins
       .map((w) => toOverlay(w, bounds))
       // only what overlaps Capri's screen
@@ -73,7 +82,10 @@ function startWindowWatch({ overlay, onUpdate }) {
       child?.kill();
     },
     // her window moved (another screen, the taskbar in it or not): the same windows, from there
-    refresh: send,
+    refresh() {
+      cachedBounds = null;
+      send();
+    },
   };
 }
 

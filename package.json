@@ -47,6 +47,7 @@
       "assets/**",
       "hooks/**",
       "scripts/**",
+      "marketplace/**",
       "package.json",
       "LICENSE"
     ],

@@ -12,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -ReferencedAssemblies System.Management -TypeDefinition @"
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -35,9 +36,13 @@ public static class CapriWindows {
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder name, ref int size);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
   [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);
+  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint uPeriod);
+  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint uPeriod);
 
   const int GWL_EXSTYLE = -20;
   const int WS_EX_TOOLWINDOW = 0x80;
@@ -112,7 +117,11 @@ public static class CapriWindows {
   }
 
   // Which of them the window in front is, as a JSON list of keys.
+  static IntPtr lastAiFg = IntPtr.Zero;
+  static string lastAi = "[]";
   static string Ai(IntPtr fg) {
+    if (fg == lastAiFg) return lastAi;
+    lastAiFg = fg;
     var title = new StringBuilder(512);
     GetWindowText(fg, title, 512);
     Program(fg);
@@ -123,7 +132,8 @@ public static class CapriWindows {
       if (keys.Length > 0) keys.Append(',');
       keys.Append('"').Append(ai[0]).Append('"');
     }
-    return "[" + keys.ToString() + "]";
+    lastAi = "[" + keys.ToString() + "]";
+    return lastAi;
   }
 
   public static void Init() {
@@ -189,13 +199,18 @@ public static class CapriWindows {
     return best;
   }
 
+  static readonly StringBuilder sb = new StringBuilder(4096);
+  static readonly StringBuilder cls = new StringBuilder(64);
+  static readonly StringBuilder fgClass = new StringBuilder(64);
+
   public static string Snapshot(long self) {
-    var sb = new StringBuilder();
+    sb.Clear();
     IntPtr fg = GetForegroundWindow();
-    var fgClass = new StringBuilder(64);
+    fgClass.Clear();
     GetClassName(fg, fgClass, 64);
+    string fgc = fgClass.ToString();
     // the taskbar clicked: it comes up over her (Windows has no levels among windows on top)
-    bool taskbar = fgClass.ToString() == "Shell_TrayWnd" || fgClass.ToString() == "Shell_SecondaryTrayWnd";
+    bool taskbar = fgc == "Shell_TrayWnd" || fgc == "Shell_SecondaryTrayWnd";
     sb.Append("{\"fg\":").Append(fg.ToInt64()).Append(",\"taskbar\":").Append(taskbar ? "true" : "false")
       .Append(",\"ai\":").Append(Ai(fg))
       .Append(",\"game\":").Append(game == "" ? "null" : Json(game))
@@ -210,7 +225,7 @@ public static class CapriWindows {
       if ((ex & WS_EX_TOOLWINDOW) != 0 || (ex & WS_EX_NOACTIVATE) != 0) return true;
       int cloaked;
       if (DwmGetWindowAttribute(h, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return true;
-      var cls = new StringBuilder(64);
+      cls.Clear();
       GetClassName(h, cls, 64);
       string c = cls.ToString();
       if (c == "Progman" || c == "WorkerW" || c == "Shell_TrayWnd" || c == "Shell_SecondaryTrayWnd") return true;
@@ -228,21 +243,61 @@ public static class CapriWindows {
     sb.Append("]}");
     return sb.ToString();
   }
+
+  public static void Run(long self, int parentPid) {
+    Init();
+    try { timeBeginPeriod(1); } catch {}
+    string last = "";
+    long fastUntil = 0;
+    long fastInterval = Stopwatch.Frequency * 350 / 1000;
+    int tick = 0;
+    IntPtr parentHandle = IntPtr.Zero;
+    if (parentPid != 0) {
+      try { parentHandle = OpenProcess(0x1000, false, (uint)parentPid); } catch {}
+    }
+
+    try {
+      while (true) {
+        tick++;
+        if (parentPid != 0 && (tick % 20 == 0)) {
+          if (parentHandle != IntPtr.Zero) {
+            uint exitCode;
+            if (GetExitCodeProcess(parentHandle, out exitCode) && exitCode != 259) break;
+          } else {
+            try {
+              if (System.Diagnostics.Process.GetProcessById(parentPid).HasExited) break;
+            } catch {
+              break;
+            }
+          }
+        }
+
+        string snap = Snapshot(self);
+        bool changed = (snap != last);
+        if (changed) {
+          Console.Out.WriteLine(snap);
+          Console.Out.Flush();
+          last = snap;
+          fastUntil = Stopwatch.GetTimestamp() + fastInterval;
+        }
+
+        short lBtn = GetAsyncKeyState(0x01);
+        short rBtn = GetAsyncKeyState(0x02);
+        bool isMouseDown = ((lBtn & 0x8000) != 0) || ((rBtn & 0x8000) != 0);
+        bool inMotion = isMouseDown || (Stopwatch.GetTimestamp() < fastUntil);
+
+        if (inMotion) {
+          System.Threading.Thread.Sleep(8); // High frequency (~120 FPS) while moving or dragging
+        } else {
+          System.Threading.Thread.Sleep(120); // Resting / idle frequency
+        }
+      }
+    } finally {
+      try { timeEndPeriod(1); } catch {}
+      if (parentHandle != IntPtr.Zero) CloseHandle(parentHandle);
+    }
+  }
 }
 "@
 
-[CapriWindows]::Init()
-$last = ''
-$tick = 0
-while ($true) {
-  $snap = [CapriWindows]::Snapshot($Self)
-  if ($snap -ne $last) {
-    [Console]::Out.WriteLine($snap)
-    [Console]::Out.Flush()
-    $last = $snap
-  }
-  # stop with Capri, even if she crashed without telling us
-  $tick++
-  if ($ParentPid -and ($tick % 20 -eq 0) -and -not (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue)) { break }
-  Start-Sleep -Milliseconds 150
-}
+[CapriWindows]::Run($Self, $ParentPid)
