@@ -1,3 +1,12 @@
+#Fork
+This fork attempted to fix a couple of bugs and shortcomings in the original repo.
+This includes the lack of a player selection feature and the lack of support for monitors with high frame rates (Capri lagged when the window it was running in was moved), but in the future the project will be rewritten in Rust to improve development. 
+The original project is heavily scattered across multiple languages... 
+AI was used in the development process. 
+
+
+
+
 **English** · [Français](README.fr.md)
 
 # Capri
